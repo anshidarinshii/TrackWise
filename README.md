@@ -21,8 +21,8 @@ A responsive personal finance tracker web application built with Node.js, Expres
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
-cd trackwise
+git clone https://github.com/anshidarinshii/TrackWise.git
+cd TrackWise
 ```
 
 2. Install dependencies:
@@ -60,12 +60,14 @@ npm run dev
 trackwise/
 ├── public/
 │   ├── css/
-│   │   └── style.css
-│   │   
+│   │   ├── style.css
+│   │   └── dashboard.css
 │   ├── js/
-│   │   └── auth.js
+│   │   ├── auth.js
+│   │   └── dashboard.js
 │   ├── index.html
-│   └── register.html
+│   ├── register.html
+│   └── dashboard.html
 ├── server.js
 ├── schema.sql
 ├── package.json
@@ -89,4 +91,4 @@ trackwise/
 
 ## License
 
-This project is licensed under the MIT License. 
+This project is licensed under the MIT License.
