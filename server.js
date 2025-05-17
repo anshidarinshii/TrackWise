@@ -18,14 +18,18 @@ app.use(express.static('public'));
 
 // Database connection
 const db = mysql.createConnection({
-  host: process.env.DB_HOST || 'shortline.proxy.rlwy.net',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '2411',
-  database: process.env.DB_NAME || 'railway',
-  port: process.env.DB_PORT || 46183,
+  host: 'shortline.proxy.rlwy.net',
+  user: 'root',
+  password: '2411',
+  database: 'railway',
+  port: 46183,
   ssl: {
     rejectUnauthorized: false
-  }
+  },
+  connectTimeout: 10000,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
 });
 
 // Add error handling for database connection
@@ -35,6 +39,17 @@ db.connect((err) => {
     return;
   }
   console.log('Successfully connected to the database');
+});
+
+// Handle connection errors
+db.on('error', (err) => {
+  console.error('Database error:', err);
+  if (err.code === 'PROTOCOL_CONNECTION_LOST') {
+    console.log('Reconnecting to database...');
+    db.connect();
+  } else {
+    throw err;
+  }
 });
 
 // Session store
