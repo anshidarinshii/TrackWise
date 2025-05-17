@@ -18,11 +18,11 @@ app.use(express.static('public'));
 
 // Database connection
 const db = mysql.createConnection({
-  host: process.env.DB_HOST || 'localhost',
+  host: process.env.DB_HOST || 'shortline.proxy.rlwy.net',
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '2411',
   database: process.env.DB_NAME || 'railway',
-  port: process.env.DB_PORT || 3306,
+  port: process.env.DB_PORT || 46183,
   ssl: {
     rejectUnauthorized: false
   }
