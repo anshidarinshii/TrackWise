@@ -1,8 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
-const pgSession = require('connect-pg-simple')(session);
-const { Pool } = require('pg');
+const MySQLStore = require('express-mysql-session')(session);
+const mysql = require('mysql2');
 const cors = require('cors');
 const path = require('path');
 const bcrypt = require('bcryptjs');
@@ -17,18 +17,31 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
 
 // Database connection
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+const db = mysql.createConnection({
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || '2411',
+  database: process.env.DB_NAME || 'railway',
+  port: process.env.DB_PORT || 3306,
   ssl: {
     rejectUnauthorized: false
   }
 });
 
-// Session store
-const sessionStore = new pgSession({
-  pool,
-  tableName: 'session'
+// Add error handling for database connection
+db.connect((err) => {
+  if (err) {
+    console.error('Error connecting to the database:', err);
+    return;
+  }
+  console.log('Successfully connected to the database');
 });
+
+// Session store
+const sessionStore = new MySQLStore({
+  expiration: 86400000, // 24 hours
+  createDatabaseTable: true
+}, db);
 
 // Session middleware
 app.use(session({
@@ -60,36 +73,42 @@ app.post('/api/register', async (req, res) => {
   const { name, email, password } = req.body;
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
-    const query = 'INSERT INTO users (name, email, password) VALUES ($1, $2, $3) RETURNING id';
-    const result = await pool.query(query, [name, email, hashedPassword]);
-    res.status(201).json({ message: 'Registration successful' });
+    const query = 'INSERT INTO users (name, email, password) VALUES (?, ?, ?)';
+    db.query(query, [name, email, hashedPassword], (err, results) => {
+      if (err) {
+        console.error('Registration error:', err);
+        res.status(500).json({ error: 'Registration failed' });
+        return;
+      }
+      res.status(201).json({ message: 'Registration successful' });
+    });
   } catch (error) {
-    res.status(500).json({ error: 'Registration failed' });
+    console.error('Registration error:', error);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
-  try {
-    const query = 'SELECT * FROM users WHERE email = $1';
-    const result = await pool.query(query, [email]);
-    
-    if (result.rows.length === 0) {
-      return res.status(401).json({ error: 'Invalid credentials' });
+  const query = 'SELECT * FROM users WHERE email = ?';
+  
+  db.query(query, [email], async (err, results) => {
+    if (err || results.length === 0) {
+      res.status(401).json({ error: 'Invalid credentials' });
+      return;
     }
 
-    const user = result.rows[0];
+    const user = results[0];
     const validPassword = await bcrypt.compare(password, user.password);
     
     if (!validPassword) {
-      return res.status(401).json({ error: 'Invalid credentials' });
+      res.status(401).json({ error: 'Invalid credentials' });
+      return;
     }
 
     req.session.userId = user.id;
     res.json({ message: 'Login successful', user: { id: user.id, name: user.name, email: user.email } });
-  } catch (error) {
-    res.status(500).json({ error: 'Server error' });
-  }
+  });
 });
 
 app.post('/api/logout', (req, res) => {
@@ -98,63 +117,65 @@ app.post('/api/logout', (req, res) => {
 });
 
 // Check authentication status
-app.get('/api/check-auth', requireAuth, async (req, res) => {
-  try {
-    const query = 'SELECT name FROM users WHERE id = $1';
-    const result = await pool.query(query, [req.session.userId]);
-    
-    if (result.rows.length === 0) {
-      return res.status(401).json({ error: 'Unauthorized' });
+app.get('/api/check-auth', requireAuth, (req, res) => {
+  const query = 'SELECT name FROM users WHERE id = ?';
+  db.query(query, [req.session.userId], (err, results) => {
+    if (err || results.length === 0) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
     }
-    res.json({ name: result.rows[0].name });
-  } catch (error) {
-    res.status(500).json({ error: 'Server error' });
-  }
+    res.json({ name: results[0].name });
+  });
 });
 
 // Dashboard data
-app.get('/api/dashboard', requireAuth, async (req, res) => {
-  try {
-    const userId = req.session.userId;
-    const query = `
-      SELECT 
-        COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE -amount END), 0) as balance,
-        COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) as income,
-        COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) as expenses
-      FROM transactions 
-      WHERE user_id = $1
-    `;
-    
-    const result = await pool.query(query, [userId]);
-    res.json(result.rows[0]);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch dashboard data' });
-  }
+app.get('/api/dashboard', requireAuth, (req, res) => {
+  const userId = req.session.userId;
+  
+  const query = `
+    SELECT 
+      COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE -amount END), 0) as balance,
+      COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) as income,
+      COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) as expenses
+    FROM transactions 
+    WHERE user_id = ?
+  `;
+  
+  db.query(query, [userId], (err, results) => {
+    if (err) {
+      res.status(500).json({ error: 'Failed to fetch dashboard data' });
+      return;
+    }
+    res.json(results[0]);
+  });
 });
 
 // Transactions
-app.get('/api/transactions', requireAuth, async (req, res) => {
-  try {
-    const userId = req.session.userId;
-    const query = 'SELECT * FROM transactions WHERE user_id = $1 ORDER BY timestamp DESC';
-    const result = await pool.query(query, [userId]);
-    res.json(result.rows);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch transactions' });
-  }
+app.get('/api/transactions', requireAuth, (req, res) => {
+  const userId = req.session.userId;
+  const query = 'SELECT * FROM transactions WHERE user_id = ? ORDER BY timestamp DESC';
+  
+  db.query(query, [userId], (err, results) => {
+    if (err) {
+      res.status(500).json({ error: 'Failed to fetch transactions' });
+      return;
+    }
+    res.json(results);
+  });
 });
 
-app.post('/api/transactions', requireAuth, async (req, res) => {
-  try {
-    const userId = req.session.userId;
-    const { type, amount, description, date } = req.body;
-    
-    const query = 'INSERT INTO transactions (user_id, type, amount, description, timestamp) VALUES ($1, $2, $3, $4, $5) RETURNING id';
-    const result = await pool.query(query, [userId, type, amount, description, date]);
-    res.json({ success: true, id: result.rows[0].id });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to add transaction' });
-  }
+app.post('/api/transactions', requireAuth, (req, res) => {
+  const userId = req.session.userId;
+  const { type, amount, description, date } = req.body;
+  
+  const query = 'INSERT INTO transactions (user_id, type, amount, description, timestamp) VALUES (?, ?, ?, ?, ?)';
+  db.query(query, [userId, type, amount, description, date], (err, results) => {
+    if (err) {
+      res.status(500).json({ error: 'Failed to add transaction' });
+      return;
+    }
+    res.json({ success: true, id: results.insertId });
+  });
 });
 
 // Start server
