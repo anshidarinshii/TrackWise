@@ -20,7 +20,7 @@ app.use(express.static('public'));
 const db = mysql.createConnection({
   host: 'shortline.proxy.rlwy.net',
   user: 'root',
-  password: '2411',
+  password: 'fLVMDCoXhqqWMbNhXhYXXMkTYGPupPky',
   database: 'railway',
   port: 46183,
   ssl: {
